@@ -93,10 +93,13 @@ const MainInterface = ({ currentTime, volume, setVolume, showVolumeControl, setS
         const transcript = Array.from(event.results)
           .map(result => result[0].transcript.toLowerCase())
           .join('');
+
+        console.log('Transcript:', transcript);
           
         if (transcript.includes('hey mazda')) {
           setShowAssistant(true);
           setIsListening(true);
+          console.log('Listening...');
           handleCommand(transcript);
           setTimeout(() => {
             setIsListening(false);

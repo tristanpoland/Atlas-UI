@@ -26,6 +26,7 @@
     "css-loader": "^7.1.2",
     "graphhopper-js-api-client": "^7.6.1",
     "leaflet": "^1.9.4",
+    "leaflet-routing-machine": "^3.2.12",
     "lucide-react": "^0.468.0",
     "next": "^14.2.11",
     "pigeon-maps": "^0.22.1",

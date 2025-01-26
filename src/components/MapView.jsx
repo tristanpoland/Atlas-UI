@@ -1,6 +1,9 @@
+"use client";
+
 import React, { memo, useState, useEffect } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet-routing-machine';
 import { Navigation, Search, Compass, Map as MapIcon, Clock } from 'lucide-react';
 
 const mapStyles = `
@@ -14,6 +17,12 @@ const mapStyles = `
   .leaflet-control-container {
     z-index: 1;
   }
+  .leaflet-routing-container {
+    background: rgba(0,0,0,0.8);
+    color: white;
+    padding: 1rem;
+    border-radius: 0.5rem;
+  }
 `;
 
 const CarNavigation = memo(() => {
@@ -22,7 +31,7 @@ const CarNavigation = memo(() => {
   const [waypoints, setWaypoints] = useState([]);
   const [showWaypointSearch, setShowWaypointSearch] = useState(false);
   const [map, setMap] = useState(null);
-  const [route, setRoute] = useState(null);
+  const [routingControl, setRoutingControl] = useState(null);
   const [currentLocation, setCurrentLocation] = useState([37.7749, -122.4194]);
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
@@ -42,7 +51,6 @@ const CarNavigation = memo(() => {
       maxZoom: 19,
     }).addTo(newMap);
 
-    // Create initial user marker
     const userMarker = L.marker(currentLocation).addTo(newMap);
     newMap.userMarker = userMarker;
     
@@ -56,14 +64,12 @@ const CarNavigation = memo(() => {
         setSpeed(speed ? Math.round(speed * 2.237) : '0');
         setHeading(getHeadingDirection(heading));
         
-        if (!map.userMarker) {
-          map.userMarker = L.marker(newLocation).addTo(newMap);
-        } else {
-          map.userMarker.setLatLng(newLocation);
+        if (newMap.userMarker) {
+          newMap.userMarker.setLatLng(newLocation);
+          if (routingControl) {
+            updateRoute(newLocation);
+          }
         }
-        
-        newMap.setView(newLocation);
-        if (route) calculateRoute(newLocation, route.destination);
       },
       null,
       { enableHighAccuracy: true }
@@ -81,44 +87,100 @@ const CarNavigation = memo(() => {
     return directions[index];
   };
 
-  const calculateRoute = async (start, end) => {
-    if (!start || !end) return;
+  const updateRoute = async (start, end = null) => {
+    if (!start) return;
+    const destination = end || (routingControl?.getWaypoints()?.[1]?.latLng);
+    if (!destination) return;
+    
+    // Convert to proper format if needed
+    const startCoords = Array.isArray(start) ? start : [start.lat, start.lng];
+    const destCoords = Array.isArray(destination) ? destination : [destination.lat, destination.lng];
 
     try {
+      // Try OSRM first
       const response = await fetch(
         `https://router.project-osrm.org/route/v1/driving/` +
-        `${start[1]},${start[0]};${end[1]},${end[0]}` +
+        `${startCoords[1]},${startCoords[0]};${destCoords[1]},${destCoords[0]}` +
         `?overview=full&geometries=geojson&steps=true`
       );
       
       const data = await response.json();
       
       if (data.routes?.[0]) {
-        if (route?.line) {
-          map.removeLayer(route.line);
-        }
-
-        const routeLine = L.geoJSON(data.routes[0].geometry, {
-          style: {
-            color: '#3b82f6',
-            weight: 4,
-            opacity: 0.8
-          }
-        }).addTo(map);
-
-        setRoute({ line: routeLine, destination: end });
-        setEta(Math.round(data.routes[0].duration / 60));
-        setDistance(Math.round(data.routes[0].distance / 1000));
-        setInstructions(data.routes[0].legs[0].steps.map(step => ({
-          instruction: step.maneuver.instruction,
-          distance: Math.round(step.distance)
-        })));
-
-        map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+        handleRouteSuccess(data.routes[0], start, destination);
+      } else {
+        // Fallback to local routing
+        useLocalRouting(start, destination);
       }
     } catch (error) {
-      console.error('Route calculation error:', error);
+      console.error('Remote routing failed, using local:', error);
+      useLocalRouting(start, destination);
     }
+  };
+
+  const useLocalRouting = (start, destination) => {
+    const startCoords = Array.isArray(start) ? start : [start.lat, start.lng];
+    const destCoords = Array.isArray(destination) ? destination : [destination.lat, destination.lng];
+    if (routingControl) {
+      map.removeControl(routingControl);
+    }
+
+    const control = L.Routing.control({
+      waypoints: [
+        L.latLng(startCoords[0], startCoords[1]),
+        L.latLng(destCoords[0], destCoords[1])
+      ],
+      router: L.Routing.osrm({
+        serviceUrl: 'https://router.project-osrm.org/route/v1'
+      }),
+      routeWhileDragging: false,
+      addWaypoints: false,
+      fitSelectedRoutes: true,
+      showAlternatives: false,
+      lineOptions: {
+        styles: [{ color: '#3b82f6', weight: 4, opacity: 0.8 }]
+      }
+    }).addTo(map);
+
+    control.on('routesfound', (e) => {
+      const route = e.routes[0];
+      setEta(Math.round(route.summary.totalTime / 60));
+      setDistance(Math.round(route.summary.totalDistance / 1000));
+      setInstructions(route.instructions.map(step => ({
+        instruction: step.text,
+        distance: Math.round(step.distance)
+      })));
+    });
+
+    setRoutingControl(control);
+  };
+
+  const handleRouteSuccess = (route, start, end) => {
+    if (routingControl) {
+      map.removeControl(routingControl);
+    }
+
+    const routeLine = L.geoJSON(route.geometry, {
+      style: {
+        color: '#3b82f6',
+        weight: 4,
+        opacity: 0.8
+      }
+    }).addTo(map);
+
+    setRoutingControl({ getWaypoints: () => [
+      { latLng: L.latLng(start[0], start[1]) },
+      { latLng: L.latLng(end.lat, end.lng) }
+    ]});
+    
+    setEta(Math.round(route.duration / 60));
+    setDistance(Math.round(route.distance / 1000));
+    setInstructions(route.legs[0].steps.map(step => ({
+      instruction: step.maneuver.instruction,
+      distance: Math.round(step.distance)
+    })));
+
+    map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
   };
 
   const handleSearch = async (query) => {
@@ -132,26 +194,31 @@ const CarNavigation = memo(() => {
 
     try {
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`
+        `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=5`
       );
       const data = await response.json();
-      setSuggestions(data.slice(0, 5));
+      setSuggestions(data.features);
     } catch (error) {
       console.error('Search error:', error);
     }
   };
 
   const selectPlace = async (place) => {
-    setSearchQuery(place.display_name);
+    const properties = place.properties;
+    const name = [properties.name, properties.street, properties.city, properties.state, properties.country]
+      .filter(Boolean)
+      .join(', ');
+    setSearchQuery(name);
     setShowSuggestions(false);
     
-    const destination = [parseFloat(place.lat), parseFloat(place.lon)];
+    const coordinates = place.geometry.coordinates;
+    const destination = { lat: coordinates[1], lng: coordinates[0] };
     
     if (map.destMarker) {
       map.removeLayer(map.destMarker);
     }
     
-    map.destMarker = L.marker(destination, {
+    map.destMarker = L.marker([destination.lat, destination.lng], {
       icon: L.divIcon({
         html: '📍',
         iconSize: [25, 25],
@@ -160,15 +227,16 @@ const CarNavigation = memo(() => {
     }).addTo(map);
 
     const newHistory = [
-      { id: Date.now(), name: place.display_name, coordinates: destination },
+      { id: Date.now(), name, coordinates: [destination.lat, destination.lng] },
       ...searchHistory.slice(0, 4)
     ];
     setSearchHistory(newHistory);
     localStorage.setItem('searchHistory', JSON.stringify(newHistory));
     
-    await calculateRoute(currentLocation, destination);
+    await updateRoute(currentLocation, destination);
   };
 
+  // Rest of the component remains the same
   return (
     <div className="relative h-screen w-screen bg-gray-900 overflow-hidden">
       <style>{mapStyles}</style>
@@ -201,12 +269,16 @@ const CarNavigation = memo(() => {
               <div className="absolute w-full mt-2 bg-black/90 rounded-lg overflow-hidden">
                 {searchQuery && suggestions.map((place) => (
                   <button
-                    key={place.place_id}
+                    key={place.properties.osm_id}
                     onClick={() => selectPlace(place)}
                     className="w-full flex items-center p-4 hover:bg-white/10 text-left"
                   >
                     <MapIcon className="text-white/60 mr-3" size={20} />
-                    <span className="text-white/90">{place.display_name}</span>
+                    <span className="text-white/90">
+                      {[place.properties.name, place.properties.street, place.properties.city]
+                        .filter(Boolean)
+                        .join(', ')}
+                    </span>
                   </button>
                 ))}
                 
@@ -214,9 +286,10 @@ const CarNavigation = memo(() => {
                   <button
                     key={item.id}
                     onClick={() => selectPlace({ 
-                      display_name: item.name, 
-                      lat: item.coordinates[0], 
-                      lon: item.coordinates[1] 
+                      properties: { name: item.name },
+                      geometry: { 
+                        coordinates: [item.coordinates[1], item.coordinates[0]]
+                      }
                     })}
                     className="w-full flex items-center p-4 hover:bg-white/10 text-left"
                   >
@@ -232,7 +305,7 @@ const CarNavigation = memo(() => {
 
       <div id="map" className="h-screen w-screen" />
 
-      {route && (
+      {routingControl && (
         <div className="fixed bottom-4 left-4 bg-black/80 backdrop-blur-md rounded-lg p-4 text-white z-10">
           <div className="flex items-center gap-4 mb-2">
             <div>
@@ -294,18 +367,23 @@ const CarNavigation = memo(() => {
                   <div className="absolute w-full mt-2 bg-gray-800 rounded-lg overflow-hidden">
                     {suggestions.map((place) => (
                       <button
-                        key={place.place_id}
+                        key={place.properties.osm_id}
                         onClick={() => {
+                          const coordinates = place.geometry.coordinates;
                           setWaypoints([...waypoints, {
-                            name: place.display_name,
-                            coordinates: [parseFloat(place.lat), parseFloat(place.lon)]
+                            name: [place.properties.name, place.properties.street, place.properties.city]
+                              .filter(Boolean)
+                              .join(', '),
+                            coordinates: [coordinates[1], coordinates[0]]
                           }]);
                           setSearchQuery('');
                           setSuggestions([]);
                         }}
                         className="w-full p-3 text-left text-white hover:bg-white/10"
                       >
-                        {place.display_name}
+                        {[place.properties.name, place.properties.street, place.properties.city]
+                          .filter(Boolean)
+                          .join(', ')}
                       </button>
                     ))}
                   </div>
