@@ -3,8 +3,9 @@
 import React, { memo, useState, useEffect } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import 'leaflet-routing-machine';
-import { Navigation, Search, Compass, Map as MapIcon, Clock } from 'lucide-react';
+import 'leaflet-routing-machine/dist/leaflet-routing-machine.css';
+import * as LRM from 'leaflet-routing-machine';
+import { Navigation, Search, Compass, Map as MapIcon, Clock, AlertTriangle } from 'lucide-react';
 
 const mapStyles = `
   .leaflet-tile {
@@ -34,7 +35,9 @@ const CarNavigation = memo(() => {
   const [routingControl, setRoutingControl] = useState(null);
   const [currentLocation, setCurrentLocation] = useState([37.7749, -122.4194]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [pendingSearchQuery, setPendingSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
+  const [mapboxFallback, setMapboxFallback] = useState(false);
   const [searchHistory, setSearchHistory] = useState(() => {
     const saved = localStorage.getItem('searchHistory');
     return saved ? JSON.parse(saved) : [];
@@ -92,12 +95,15 @@ const CarNavigation = memo(() => {
     const destination = end || (routingControl?.getWaypoints()?.[1]?.latLng);
     if (!destination) return;
     
-    // Convert to proper format if needed
     const startCoords = Array.isArray(start) ? start : [start.lat, start.lng];
     const destCoords = Array.isArray(destination) ? destination : [destination.lat, destination.lng];
-
+  
     try {
-      // Try OSRM first
+      if (routingControl) {
+        map.removeControl(routingControl);
+        setRoutingControl(null);
+      }
+  
       const response = await fetch(
         `https://router.project-osrm.org/route/v1/driving/` +
         `${startCoords[1]},${startCoords[0]};${destCoords[1]},${destCoords[0]}` +
@@ -109,7 +115,6 @@ const CarNavigation = memo(() => {
       if (data.routes?.[0]) {
         handleRouteSuccess(data.routes[0], start, destination);
       } else {
-        // Fallback to local routing
         useLocalRouting(start, destination);
       }
     } catch (error) {
@@ -119,40 +124,53 @@ const CarNavigation = memo(() => {
   };
 
   const useLocalRouting = (start, destination) => {
+    if (!map) {
+      console.error('Map is not initialized');
+      return;
+    }
+  
     const startCoords = Array.isArray(start) ? start : [start.lat, start.lng];
     const destCoords = Array.isArray(destination) ? destination : [destination.lat, destination.lng];
-    if (routingControl) {
-      map.removeControl(routingControl);
-    }
-
-    const control = L.Routing.control({
-      waypoints: [
-        L.latLng(startCoords[0], startCoords[1]),
-        L.latLng(destCoords[0], destCoords[1])
-      ],
-      router: L.Routing.osrm({
-        serviceUrl: 'https://router.project-osrm.org/route/v1'
-      }),
-      routeWhileDragging: false,
-      addWaypoints: false,
-      fitSelectedRoutes: true,
-      showAlternatives: false,
-      lineOptions: {
-        styles: [{ color: '#3b82f6', weight: 4, opacity: 0.8 }]
+  
+    try {
+      if (routingControl) {
+        if (map.removeControl) {
+          map.removeControl(routingControl);
+        }
       }
-    }).addTo(map);
-
-    control.on('routesfound', (e) => {
-      const route = e.routes[0];
-      setEta(Math.round(route.summary.totalTime / 60));
-      setDistance(Math.round(route.summary.totalDistance / 1000));
-      setInstructions(route.instructions.map(step => ({
-        instruction: step.text,
-        distance: Math.round(step.distance)
-      })));
-    });
-
-    setRoutingControl(control);
+  
+      const control = L.Routing.control({
+        waypoints: [
+          L.latLng(startCoords[0], startCoords[1]),
+          L.latLng(destCoords[0], destCoords[1])
+        ],
+        routeWhileDragging: false,
+        addWaypoints: false,
+        fitSelectedRoutes: true,
+        showAlternatives: false,
+        lineOptions: {
+          styles: [{ color: '#3b82f6', weight: 4, opacity: 0.8 }]
+        }
+      });
+  
+      if (map) {
+        control.addTo(map);
+      }
+  
+      control.on('routesfound', (e) => {
+        const route = e.routes[0];
+        setEta(Math.round(route.summary.totalTime / 60));
+        setDistance(Math.round(route.summary.totalDistance / 1000));
+        setInstructions(route.instructions.map(step => ({
+          instruction: step.text,
+          distance: Math.round(step.distance)
+        })));
+      });
+  
+      setRoutingControl(control);
+    } catch (error) {
+      console.error('Error creating routing control:', error);
+    }
   };
 
   const handleRouteSuccess = (route, start, end) => {
@@ -183,32 +201,73 @@ const CarNavigation = memo(() => {
     map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
   };
 
-  const handleSearch = async (query) => {
-    setSearchQuery(query);
-    setShowSuggestions(true);
-    
-    if (!query.trim()) {
+  const handleSearchQuery = async () => {
+    const query = pendingSearchQuery.trim();
+    if (!query) {
       setSuggestions([]);
+      setShowSuggestions(false);
       return;
     }
 
     try {
-      const response = await fetch(
-        `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=5`
+      const mapboxResponse = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?` +
+        `access_token=TOKEN&limit=5`  
       );
-      const data = await response.json();
-      setSuggestions(data.features);
+      const mapboxData = await mapboxResponse.json();
+
+      if (mapboxData.features && mapboxData.features.length > 0) {
+        setMapboxFallback(false);
+        setSuggestions(mapboxData.features.map(feature => ({
+          properties: {
+            name: feature.place_name,
+            osm_id: feature.id,
+            number: feature.address,
+            street: feature.text,
+            city: feature.context?.find(c => c.id.startsWith('place'))?.text,
+            state: feature.context?.find(c => c.id.startsWith('region'))?.text
+          },
+          geometry: {
+            coordinates: feature.center
+          }
+        })));
+      } else {
+        setMapboxFallback(true);
+        const response = await fetch(
+          `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=5&osm_tag=highway:residential`
+        );
+        const data = await response.json();
+        setSuggestions(data.features.filter(f => f.properties.osm_key === 'highway' || f.properties.street));
+      }
+      setShowSuggestions(true);
     } catch (error) {
-      console.error('Search error:', error);
+      console.error('Geocoding error:', error);
+      
+      setMapboxFallback(true);
+      try {
+        const response = await fetch(
+          `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=5&osm_tag=highway:residential`
+        );
+        const data = await response.json();
+        setSuggestions(data.features.filter(f => f.properties.osm_key === 'highway' || f.properties.street));
+        setShowSuggestions(true);
+      } catch (fallbackError) {
+        console.error('Fallback search error:', fallbackError);
+        setSuggestions([]);
+        setShowSuggestions(false);
+      }
     }
   };
 
   const selectPlace = async (place) => {
     const properties = place.properties;
-    const name = [properties.name, properties.street, properties.city, properties.state, properties.country]
-      .filter(Boolean)
-      .join(', ');
+    const name = properties.name || 
+      [properties.number, properties.street, properties.city, properties.state]
+        .filter(Boolean)
+        .join(', ');
+    
     setSearchQuery(name);
+    setPendingSearchQuery('');
     setShowSuggestions(false);
     
     const coordinates = place.geometry.coordinates;
@@ -236,13 +295,19 @@ const CarNavigation = memo(() => {
     await updateRoute(currentLocation, destination);
   };
 
-  // Rest of the component remains the same
   return (
     <div className="relative h-screen w-screen bg-gray-900 overflow-hidden">
       <style>{mapStyles}</style>
       
       <div className="fixed top-0 left-0 right-0 z-20">
         <div className="bg-black/80 backdrop-blur-md p-4">
+          {mapboxFallback && suggestions.length > 0 && (
+            <div className="bg-yellow-500/20 text-yellow-300 p-2 rounded-lg mb-2 text-sm flex items-center">
+              <AlertTriangle className="mr-2" size={16} />
+              Fallback to alternative search service due to connection issues
+            </div>
+          )}
+          
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-4">
               <Compass className="text-blue-400" size={24} />
@@ -257,44 +322,37 @@ const CarNavigation = memo(() => {
               <Search className="text-white/70" size={20} />
               <input
                 type="text"
-                value={searchQuery}
-                onChange={(e) => handleSearch(e.target.value)}
-                onFocus={() => setShowSuggestions(true)}
+                value={pendingSearchQuery}
+                onChange={(e) => setPendingSearchQuery(e.target.value)}
+                onFocus={() => setSuggestions(searchHistory)}
                 placeholder="Search destination..."
                 className="w-full bg-transparent text-white outline-none"
               />
+              {pendingSearchQuery && (
+                <button 
+                  onClick={handleSearchQuery}
+                  className="bg-blue-500 text-white px-3 py-1 rounded"
+                >
+                  Search
+                </button>
+              )}
             </div>
 
-            {showSuggestions && (searchQuery || searchHistory.length > 0) && (
+            {showSuggestions && (suggestions.length > 0) && (
               <div className="absolute w-full mt-2 bg-black/90 rounded-lg overflow-hidden">
-                {searchQuery && suggestions.map((place) => (
+                {suggestions.map((place) => (
                   <button
-                    key={place.properties.osm_id}
+                    key={place.properties.osm_id || place.id}
                     onClick={() => selectPlace(place)}
                     className="w-full flex items-center p-4 hover:bg-white/10 text-left"
                   >
                     <MapIcon className="text-white/60 mr-3" size={20} />
                     <span className="text-white/90">
-                      {[place.properties.name, place.properties.street, place.properties.city]
-                        .filter(Boolean)
-                        .join(', ')}
+                      {place.properties.name || 
+                        [place.properties.number, place.properties.street, place.properties.city]
+                          .filter(Boolean)
+                          .join(', ')}
                     </span>
-                  </button>
-                ))}
-                
-                {!searchQuery && searchHistory.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => selectPlace({ 
-                      properties: { name: item.name },
-                      geometry: { 
-                        coordinates: [item.coordinates[1], item.coordinates[0]]
-                      }
-                    })}
-                    className="w-full flex items-center p-4 hover:bg-white/10 text-left"
-                  >
-                    <Clock className="text-white/60 mr-3" size={20} />
-                    <span className="text-white/90">{item.name}</span>
                   </button>
                 ))}
               </div>
@@ -319,8 +377,7 @@ const CarNavigation = memo(() => {
           </div>
           <button
             onClick={() => setShowWaypointSearch(true)}
-            className="w-full mt-2 py-2 px-4 bg-blue-500/20 hover:bg-blue-500/30 rounded-lg text-blue-400 text-sm"
-          >
+            className="w-full mt-2 py-2 px-4 bg-blue-500/20 hover:bg-blue-500/30 rounded-lg text-blue-400 rounded-lg text-sm">
             Add stop
           </button>
         </div>
@@ -360,30 +417,41 @@ const CarNavigation = memo(() => {
                   type="text"
                   placeholder="Search for a place..."
                   className="w-full bg-white/10 text-white p-3 rounded-lg outline-none"
-                  value={searchQuery}
-                  onChange={(e) => handleSearch(e.target.value)}
+                  value={pendingSearchQuery}
+                  onChange={(e) => setPendingSearchQuery(e.target.value)}
                 />
-                {suggestions.length > 0 && (
+                {pendingSearchQuery && (
+                  <button 
+                    onClick={handleSearchQuery}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 bg-blue-500 text-white px-3 py-1 rounded"
+                  >
+                    Search
+                  </button>
+                )}
+                {showSuggestions && suggestions.length > 0 && (
                   <div className="absolute w-full mt-2 bg-gray-800 rounded-lg overflow-hidden">
                     {suggestions.map((place) => (
                       <button
                         key={place.properties.osm_id}
                         onClick={() => {
                           const coordinates = place.geometry.coordinates;
-                          setWaypoints([...waypoints, {
-                            name: [place.properties.name, place.properties.street, place.properties.city]
+                          const name = place.properties.name || 
+                            [place.properties.number, place.properties.street, place.properties.city]
                               .filter(Boolean)
-                              .join(', '),
+                              .join(', ');
+                          setWaypoints([...waypoints, {
+                            name,
                             coordinates: [coordinates[1], coordinates[0]]
                           }]);
-                          setSearchQuery('');
+                          setPendingSearchQuery('');
                           setSuggestions([]);
                         }}
                         className="w-full p-3 text-left text-white hover:bg-white/10"
                       >
-                        {[place.properties.name, place.properties.street, place.properties.city]
-                          .filter(Boolean)
-                          .join(', ')}
+                        {place.properties.name || 
+                          [place.properties.number, place.properties.street, place.properties.city]
+                            .filter(Boolean)
+                            .join(', ')}
                       </button>
                     ))}
                   </div>
