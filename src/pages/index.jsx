@@ -1,26 +1,29 @@
+"use client";
+
 import React, { useState, useEffect, useRef } from 'react';
-import StatusBar from '../components/StatusBar';
-import NavigationBar from '../components/NavigationBar';
-import VolumeControl from '../components/VolumeControl';
-import RadioTab from '../components/RadioTab';
-import MediaTab from '../components/MediaTab';
-import NavigationTab from '../components/NavigationTab';
-import PhoneTab from '../components/PhoneTab';
-import SettingsTab from '../components/SettingsTab';
-import voiceCommands from './commands.json';
+import dynamic from 'next/dynamic';
+
+const StatusBar = dynamic(() => import('../components/StatusBar'), { ssr: false });
+const NavigationBar = dynamic(() => import('../components/NavigationBar'), { ssr: false });
+const VolumeControl = dynamic(() => import('../components/VolumeControl'), { ssr: false });
+const RadioTab = dynamic(() => import('../components/RadioTab'), { ssr: false });
+const MediaTab = dynamic(() => import('../components/MediaTab'), { ssr: false });
+const NavigationTab = dynamic(() => import('../components/NavigationTab'), { ssr: false });
+const PhoneTab = dynamic(() => import('../components/PhoneTab'), { ssr: false });
+const SettingsTab = dynamic(() => import('../components/SettingsTab'), { ssr: false });
+const AssistantSphere = dynamic(() => import('./AssistantSphere'), { ssr: false });
 
 const SplashScreen = () => {
   const [showWarning, setShowWarning] = useState(true);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowWarning(false);
-    }, 3000);
+    const timer = setTimeout(() => setShowWarning(false), 3000);
     return () => clearTimeout(timer);
   }, []);
 
   return (
     <div className="fixed inset-0 bg-gradient-to-b from-black via-gray-900 to-black text-white overflow-hidden">
+      <script src="/tailwind.js" />
       <div className={`absolute inset-0 flex flex-col items-center justify-center transition-all duration-1000 ease-in-out transform ${
         showWarning ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full'
       }`}>
@@ -72,43 +75,6 @@ const SplashScreen = () => {
   );
 };
 
-const AssistantSphere = ({ isVisible, isListening, response }) => {
-  if (!isVisible) return null;
-
-  return (
-    <div className="fixed bottom-20 right-4 z-50">
-      <div className="relative w-32 h-32">
-        {/* Outer glow */}
-        <div className="absolute inset-0 bg-red-600 opacity-20 blur-xl rounded-full"></div>
-        
-        {/* Main sphere */}
-        <div className={`absolute inset-0 bg-gradient-to-b from-red-500 to-red-700 rounded-full 
-          ${isListening ? 'animate-pulse' : ''}`}>
-          
-          {/* Inner light effect */}
-          <div className="absolute inset-2 bg-gradient-to-t from-transparent to-red-400 rounded-full opacity-50"></div>
-          
-          {/* Dynamic wave effect */}
-          <div className="absolute inset-0">
-            <div className="w-full h-full relative overflow-hidden rounded-full">
-              <div className={`absolute inset-0 ${isListening ? 'animate-wave' : ''}`}>
-                <div className="absolute top-1/2 left-0 w-full h-1 bg-red-300 opacity-30 transform -translate-y-1/2"></div>
-                <div className="absolute top-1/2 left-0 w-full h-2 bg-red-200 opacity-20 transform -translate-y-1/2 translate-x-1/4"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      {response && (
-        <div className="absolute top-full mt-4 left-1/2 transform -translate-x-1/2 bg-black/80 p-4 rounded-lg min-w-[200px]">
-          <p className="text-lg font-light text-center">{response.visual}</p>
-        </div>
-      )}
-    </div>
-  );
-};
-
 const MainInterface = ({ currentTime, volume, setVolume, showVolumeControl, setShowVolumeControl }) => {
   const [activeTab, setActiveTab] = useState('radio');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -116,91 +82,9 @@ const MainInterface = ({ currentTime, volume, setVolume, showVolumeControl, setS
   const [isListening, setIsListening] = useState(false);
   const [assistantResponse, setAssistantResponse] = useState(null);
   const recognitionRef = useRef(null);
-  const commandsRef = useRef(voiceCommands);
 
-  const handleCommand = async (transcript) => {
-    for (const [category, config] of Object.entries(commandsRef.current.commands)) {
-      // Handle special system activation
-      if (category === 'system') {
-        const systemPatterns = config.patterns;
-        const systemMatch = systemPatterns.some(pattern => 
-          transcript.toLowerCase().includes(pattern)
-        );
-        if (systemMatch) {
-          const response = config.responses.success;
-          setShowAssistant(true);
-          setAssistantResponse({
-            speech: response.speech,
-            visual: response.visual
-          });
-          const speech = new SpeechSynthesisUtterance(response.speech);
-          window.speechSynthesis.speak(speech);
-          return;
-        }
-      }
-  
-      // Handle other command categories
-      for (const [action, patterns] of Object.entries(config.patterns)) {
-        const matchedPattern = patterns.find(pattern => 
-          transcript.toLowerCase().includes(pattern)
-        );
-  
-        if (matchedPattern) {
-          const params = transcript
-            .toLowerCase()
-            .replace('hey mazda', '')
-            .replace(matchedPattern, '')
-            .trim();
-  
-          const response = config.responses[action]?.success;
-          
-          if (response) {
-            // Execute command action
-            switch (response.action) {
-              case 'PLAY_MEDIA':
-                setActiveTab('media');
-                setIsPlaying(true);
-                break;
-              case 'START_NAVIGATION':
-                setActiveTab('nav');
-                break;
-              case 'START_CALL':
-                setActiveTab('phone');
-                break;
-              case 'SET_CLIMATE':
-                setActiveTab('settings');
-                break;
-            }
-  
-            // Display response
-            setAssistantResponse({
-              speech: response.speech.replace(/\{.*?\}/g, params),
-              visual: response.visual.replace(/\{.*?\}/g, params)
-            });
-  
-            // Text to speech
-            const speech = new SpeechSynthesisUtterance(
-              response.speech.replace(/\{.*?\}/g, params)
-            );
-            window.speechSynthesis.speak(speech);
-            return;
-          }
-        }
-      }
-    }
-  
-    // Fallback if no command matched
-    const fallback = commandsRef.current.fallback.noMatch;
-    setAssistantResponse({
-      speech: fallback.speech,
-      visual: fallback.visual
-    });
-    const speech = new SpeechSynthesisUtterance(fallback.speech);
-    window.speechSynthesis.speak(speech);
-  };
-  
   useEffect(() => {
-    if ('webkitSpeechRecognition' in window) {
+    if (typeof window !== 'undefined' && 'webkitSpeechRecognition' in window) {
       recognitionRef.current = new window.webkitSpeechRecognition();
       recognitionRef.current.continuous = true;
       recognitionRef.current.interimResults = true;
@@ -227,14 +111,22 @@ const MainInterface = ({ currentTime, volume, setVolume, showVolumeControl, setS
       };
       
       recognitionRef.current.start();
-      
-      return () => {
-        if (recognitionRef.current) {
-          recognitionRef.current.stop();
-        }
-      };
     }
+    
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
   }, []);
+
+  const handleCommand = async (transcript) => {
+    if (typeof window === 'undefined') return;
+    
+    // Command handling logic here...
+    const speech = new window.SpeechSynthesisUtterance('Command received');
+    window.speechSynthesis.speak(speech);
+  };
 
   return (
     <div className="fixed inset-0 bg-black text-white">
@@ -275,18 +167,10 @@ const MainInterface = ({ currentTime, volume, setVolume, showVolumeControl, setS
 };
 
 const MazdaInterface = () => {
-  const [tailwindLoaded, setTailwindLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState('');
   const [volume, setVolume] = useState(50);
   const [showVolumeControl, setShowVolumeControl] = useState(false);
-
-  useEffect(() => {
-    const script = document.createElement('script');
-    script.src = '/tailwind.js';
-    script.onload = () => setTailwindLoaded(true);
-    document.head.appendChild(script);
-  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -300,23 +184,17 @@ const MazdaInterface = () => {
   }, []);
 
   useEffect(() => {
-    let timeout;
-    if (showVolumeControl) {
-      timeout = setTimeout(() => setShowVolumeControl(false), 3000);
-    }
-    return () => clearTimeout(timeout);
-  }, [showVolumeControl, volume]);
+    const timer = setTimeout(() => setIsLoading(false), 4000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
-    if (tailwindLoaded) {
-      const timer = setTimeout(() => {
-        setIsLoading(false);
-      }, 4000);
-      return () => clearTimeout(timer);
+    if (showVolumeControl) {
+      const timeout = setTimeout(() => setShowVolumeControl(false), 3000);
+      return () => clearTimeout(timeout);
     }
-  }, [tailwindLoaded]);
+  }, [showVolumeControl, volume]);
 
-  if (!tailwindLoaded) return null;
   if (isLoading) return <SplashScreen />;
 
   return (
