@@ -62,8 +62,8 @@
     },
     "windows": [
       {
-        "fullscreen": true,
-        "resizable": false,
+        "fullscreen": false,
+        "resizable": true,
         "decorations": true,
         "title": "Atlas UI",
         "width": 1280,

@@ -24,6 +24,7 @@
     "child_process": "^1.0.2",
     "clsx": "^2.1.1",
     "css-loader": "^7.1.2",
+    "graphhopper-js-api-client": "^7.6.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",
     "next": "^14.2.11",
