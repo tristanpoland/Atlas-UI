@@ -1,0 +1,118 @@
+{
+    "commands": {
+      "system": {
+        "patterns": ["hey mazda", "hi mazda", "hello mazda"],
+        "responses": {
+          "success": {
+            "speech": "How can I help?",
+            "visual": "Listening...",
+            "action": "ACTIVATE_ASSISTANT"
+          }
+        }
+      },
+      "media": {
+        "patterns": {
+          "play": ["play", "start playing", "put on"],
+          "pause": ["pause", "stop playing"],
+          "next": ["next track", "skip song"],
+          "previous": ["previous track", "go back"]
+        },
+        "responses": {
+          "play": {
+            "success": {
+              "speech": "Playing {title} by {artist}",
+              "visual": "Now Playing: {title}",
+              "action": "PLAY_MEDIA"
+            },
+            "error": {
+              "speech": "I couldn't find that track",
+              "visual": "Track not found",
+              "action": "SHOW_ERROR"
+            }
+          },
+          "pause": {
+            "success": {
+              "speech": "Paused",
+              "visual": "Paused",
+              "action": "PAUSE_MEDIA"
+            }
+          }
+        }
+      },
+      "navigation": {
+        "patterns": {
+          "start": ["navigate to", "take me to", "directions to"],
+          "stop": ["stop navigation", "end navigation"],
+          "reroute": ["find another route", "avoid traffic"]
+        },
+        "responses": {
+          "start": {
+            "success": {
+              "speech": "Starting navigation to {destination}",
+              "visual": "Route to {destination}",
+              "action": "START_NAVIGATION"
+            },
+            "error": {
+              "speech": "I couldn't find that location",
+              "visual": "Location not found",
+              "action": "SHOW_ERROR"
+            }
+          }
+        }
+      },
+      "phone": {
+        "patterns": {
+          "call": ["call", "phone", "dial"],
+          "text": ["send message to", "text", "send text to"],
+          "readout": ["read my messages", "read texts"]
+        },
+        "responses": {
+          "call": {
+            "success": {
+              "speech": "Calling {contact}",
+              "visual": "Calling {contact}...",
+              "action": "START_CALL"
+            },
+            "error": {
+              "speech": "Contact not found",
+              "visual": "Contact not found",
+              "action": "SHOW_ERROR"
+            }
+          }
+        }
+      },
+      "vehicle": {
+        "patterns": {
+          "climate": ["set temperature to", "turn on ac", "turn on heat"],
+          "windows": ["open windows", "close windows"],
+          "status": ["check fuel", "tire pressure", "oil life"]
+        },
+        "responses": {
+          "climate": {
+            "success": {
+              "speech": "Setting temperature to {temp}",
+              "visual": "Temp: {temp}",
+              "action": "SET_CLIMATE"
+            }
+          }
+        }
+      }
+    },
+    "fallback": {
+      "noMatch": {
+        "speech": "I'm not sure how to help with that",
+        "visual": "Command not recognized",
+        "action": "SHOW_ERROR"
+      },
+      "noNetwork": {
+        "speech": "I'm having trouble connecting",
+        "visual": "Network error",
+        "action": "SHOW_ERROR"
+      },
+      "needsAuth": {
+        "speech": "Please connect your phone first",
+        "visual": "Phone not connected",
+        "action": "PROMPT_CONNECTION"
+      }
+    }
+  }
